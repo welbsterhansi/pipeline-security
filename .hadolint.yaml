@@ -1,0 +1,17 @@
+failure-threshold: warning
+
+trustedRegistries:
+  - docker.io
+  - mcr.microsoft.com
+  - ghcr.io
+  - gcr.io
+  - quay.io
+
+ignore:
+  - DL3008  # apt-get: pin versions only where package stability is critical
+
+label-schema:
+  org.opencontainers.image.source: text
+  org.opencontainers.image.revision: text
+  org.opencontainers.image.created: text
+  org.opencontainers.image.title: text

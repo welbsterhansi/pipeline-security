@@ -1,0 +1,101 @@
+name: Identity Workflow
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: "Enable debug mode"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+  security-events: write
+  actions: read
+
+jobs:
+  identify-changes:
+    runs-on: ubuntu-24.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    outputs:
+      folders: ${{ steps.set-matrix.outputs.folders }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed folders with Dockerfiles
+        id: set-matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # For PRs: diff all commits in the PR against the base branch.
+          # This means a Dockerfile changed in commit 1 is still detected after commit 10
+          # changes something unrelated — the full PR diff always includes it.
+          #
+          # For workflow_dispatch: no base ref available, so scan all Dockerfiles in the repo.
+
+          if [ "$EVENT_NAME" == "pull_request" ]; then
+            echo "Pull request — comparing all PR changes against base branch..."
+            git fetch origin "$BASE_REF"
+            CHANGED_FILES=$(git diff --name-only "origin/$BASE_REF" HEAD)
+          else
+            echo "Manual trigger — scanning all Dockerfiles in the repository..."
+            CHANGED_FILES=$(find . -name "Dockerfile" | sed 's|^\./||')
+          fi
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          echo "EVENT_NAME : $EVENT_NAME"
+          echo "Total files: $(echo "$CHANGED_FILES" | grep -c . || true)"
+
+          FOLDERS_JSON="["
+          FIRST=true
+
+          POTENTIAL_FOLDERS=$(echo "$CHANGED_FILES" \
+            | grep -E '^[^/]+/' \
+            | grep -v '^\.github/' \
+            | cut -d'/' -f1 \
+            | sort -u)
+
+          for FOLDER in $POTENTIAL_FOLDERS; do
+            if [ -f "$FOLDER/Dockerfile" ]; then
+              echo "Dockerfile found in: $FOLDER"
+              if [ "$FIRST" = true ]; then
+                FOLDERS_JSON="${FOLDERS_JSON}\"${FOLDER}\""
+                FIRST=false
+              else
+                FOLDERS_JSON="${FOLDERS_JSON},\"${FOLDER}\""
+              fi
+            else
+              echo "No Dockerfile in $FOLDER — skipping"
+            fi
+          done
+
+          FOLDERS_JSON="${FOLDERS_JSON}]"
+          echo "Matrix: $FOLDERS_JSON"
+          echo "folders=$FOLDERS_JSON" >> "$GITHUB_OUTPUT"
+
+  trigger-security-pipeline:
+    needs: identify-changes
+    if: >
+      needs.identify-changes.outputs.folders != '[]' &&
+      needs.identify-changes.outputs.folders != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        folder: ${{ fromJson(needs.identify-changes.outputs.folders) }}
+    uses: ./.github/workflows/reusable-security.yml
+    with:
+      image-name: ${{ matrix.folder }}
+      working-directory: ${{ matrix.folder }}
+    secrets: inherit

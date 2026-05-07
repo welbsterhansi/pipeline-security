@@ -1,0 +1,5 @@
+# app2 — .NET 8
+# gnutls: DTLS não utilizado neste serviço, risco aceito
+CVE-2026-33845
+# zlib: sem fix disponível na imagem base .NET 8, risco aceito
+CVE-2023-45853
